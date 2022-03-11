@@ -1,0 +1,267 @@
+---
+title: "Subset CDE columns for Risk Manuscript"
+author: "Jenny Smith"
+date: "6/11/21"
+output: html_document
+---
+
+# Set-up 
+
+```{r setup, cache = FALSE, include = FALSE}
+require(knitr)
+knitr::opts_knit$set(root.dir = file.path(TARGET,"Clinical/analysis/2021.06.11_Lamble_Risk_Manuscript"))
+```
+
+```{r}
+knitr::opts_chunk$set(tidy.opts=list(width.cutoff=50),
+                      tidy=TRUE,
+                      fig.align='center',
+                      fig.width = 10, fig.height = 10)
+node=Sys.info()[["nodename"]]
+if(!grepl("local", node)){
+  print(node)
+  options(bitmapType = 'cairo')
+  grDevices::X11.options(type='cairo')
+}
+
+options(stringsAsFactors = FALSE)
+table = function (..., useNA = 'ifany') base::table(..., useNA = useNA)
+```
+
+```{r message = FALSE, warning=FALSE}
+library(stringr)
+library(magrittr)
+
+library(ggplot2)
+library(gridExtra)
+
+library(dplyr)
+library(tidyr)
+library(tibble)
+
+
+library(DeGSEA)
+
+getwd()
+```
+
+
+# ClinData
+
+```{r}
+CDEs <- read.csv(file.path(CDE,"Merged/TARGET_AML_0531_1031_merged_CDEs_05.21.21.csv"))
+
+dim(CDEs)
+table(CDEs$Protocol)
+```
+
+```{r}
+elig_patients <- openxlsx::read.xlsx("AAML0531_AAML1031_patients_for_manuscript_refined_060821.xlsx", sheet=1)
+
+
+head(elig_patients)
+dim(elig_patients) #2060  149
+```
+
+```{r}
+earlier_studies <- CDEs %>% 
+  filter(grepl("AAML03P1", Protocol))
+
+
+dim(earlier_studies)
+
+table(earlier_studies$Event.ID)
+table(earlier_studies$Was.patient.in.NCI.TARGET.cohort)
+```
+
+```{r}
+elig_patients %>% 
+  filter(grepl("Unknown_USI_[56]7?$",USI)) %>% 
+  select(USI, Cyto.Fusion.Molecular.Risk_update, matches("NPM|CEBPA"))
+```
+
+Jenny, there are 3 patients I highlighted in red in the cyto/molecular/fusion/update column that we need to change to low risk (from standard), because they are either NPM1 or CEBPA positive:
+Unknown_USI_5
+Unknown_USI_6
+Unknown_USI_57
+
+```{r}
+elig_patients.update <- elig_patients %>% 
+  mutate_at(vars(Cyto.Fusion.Molecular.Risk_update),~case_when(
+    grepl("Unknown_USI_[56]7?$",USI) ~ "Low",
+    TRUE ~ .)) %>% 
+  mutate_at(vars(Risk.group.classification..by.protocol.1031), ~case_when(
+    Protocol == "AAML0531" ~ NA_character_,
+    TRUE ~ .)) %>% 
+  mutate(Risk.group.classification..by.protocol.0531=case_when(
+    Protocol=="AAML0531" ~ "Please Fill This in",
+    TRUE ~ NA_character_)) %>% 
+  bind_rows(., earlier_studies) %>% 
+  select(USI:Final.Risk.Group,Risk.group.classification..by.protocol.0531, everything())
+
+#OK
+# elig_patients.update %>% 
+#   filter(grepl("Unknown_USI_[56]7?$",USI)) %>% 
+#   select(USI, Cyto.Fusion.Molecular.Risk_update, matches("NPM|CEBPA"))
+
+dim(elig_patients.update)
+```
+
+
+# Select Columns to Send to COG
+
+```{r}
+cols <- colnames(elig_patients.update)
+# View(as.data.frame(cols))
+```
+
+```{r}
+cols_to_select <- elig_patients.update %>% 
+  select(USI, Protocol:Eligibility,
+         Cyto.Fusion.Molecular.Risk_update:Risk.group.classification..by.protocol.1031,
+         RAM.phenotype,Primary.Fusion:Additional.Fusions.CNV,Cyto_vs_Seq_Fusions,
+         FLT3.ITD.positive.:FLT3.ITD.allelic.ratio, 
+         WT1.mutation.:CEBPA.mutation.) %>% 
+  colnames(.)
+
+cols_to_select
+```
+
+
+
+# Column Descriptions 
+
+```{r}
+col_desc_manuscript <- openxlsx::read.xlsx("AAML0531_AAML1031_Column_Descriptions_for_manuscript_061121.xlsx", startRow = 2)
+
+
+head(col_desc_manuscript)
+dim(col_desc_manuscript)
+```
+
+```{r eval=FALSE}
+
+#This code chunk was used to update the column name descriptions already. So don't re-run it.
+
+
+colname_map <- openxlsx::read.xlsx(file.path(CDE, "TARGET_AML_Colnames_Mapping_File_v7.xlsx"))
+
+# head(colname_map)
+# dim(colname_map) #150   6
+
+# setdiff(colname_map$Merged_CDEs_Colnames, colnames(elig_patients.update)) #Right, no Reg #s to share outside of COG
+# 
+# col_desc <- openxlsx::read.xlsx(file.path(CDE, "CDE_Version_Information.xlsx"),
+#                                 sheet="Column_Descriptions",
+#                                 startRow=4)
+# 
+# head(col_desc)
+# dim(col_desc) # 41  2 (so only 41/150 have descriptions - will need to fill in)
+
+# 
+# col_desc_update <- colname_map %>%
+#   select(Merged_CDEs_Colnames) %>%
+#   left_join(., col_desc, by=c("Merged_CDEs_Colnames"="Column.Name"))
+# 
+
+# col_desc_update
+
+#Save the file and begin working on updating the column name descriptions
+# wb <- openxlsx::loadWorkbook(file.path(CDE, "CDE_Version_Information.xlsx"))
+# openxlsx::writeData(wb, 
+#           sheet = "Column_Descriptions", 
+#           col_desc_update, 
+#           keepNA=FALSE,
+#           rowNames=FALSE,
+#           startRow=4)
+# openxlsx::saveWorkbook(wb,file.path(CDE, "CDE_Version_Information.xlsx"),
+#              overwrite = T)
+
+# col_desc_manuscript <- col_desc_update %>% 
+#   filter(Merged_CDEs_Colnames %in% cols_to_select) %>% 
+#   add_row(Merged_CDEs_Colnames="Risk.group.classification..by.protocol.0531",.before = 8)
+
+
+# View(col_desc_manuscript)
+# openxlsx::write.xlsx(col_desc_manuscript, "AAML0531_AAML1031_Column_Descriptions_for_manuscript_refined_060821.xlsx")
+```
+
+```{r}
+#For COG 
+elig_patients.update.subset <- elig_patients.update %>% 
+  select(all_of(col_desc_manuscript$Column.Name))
+
+dim(elig_patients.update.subset) #2398   21
+head(elig_patients.update.subset)s
+
+# openxlsx::write.xlsx(elig_patients.update.subset, "AAML0531_AAML1031_AAML03P1_patients_for_manuscript_070721_v1.xlsx", row.names=FALSE,keepNA=FALSE)
+```
+
+```{r}
+#For Adam Lamble to work on updating the statistics in the manuscript draft. 
+forAdam <- elig_patients.update %>% 
+  select(all_of(col_desc_manuscript$Column.Name), matches("^OS.time|^EFS.time|^OS.event|^EFS.event"))
+
+
+head(forAdam)
+dim(forAdam)
+# openxlsx::write.xlsx(forAdam, "AAML0531_AAML1031_AAML03P1_patients_for_manuscript_withOutcome_070721_v1.xlsx", row.names=FALSE,keepNA=FALSE)
+```
+table(grepl("Need",forAdam$Primary.Fusion))
+
+```{r}
+table(forAdam$Protocol, forAdam$Classical.Risk.group)
+```
+
+
+
+```{r}
+#The update on 6/11/21 
+#However, we're now including 03P1 patients rather than only 0531 and 1031 cohorts. s
+
+# wb <- openxlsx::loadWorkbook("AAML0531_AAML1031_patients_for_manuscript_refined_060821.xlsx")
+# openxlsx::removeWorksheet(wb,  
+#                           sheet = "eligible patients")
+# openxlsx::addWorksheet(wb,
+#                        sheet = "eligible patients")
+# openxlsx::writeData(wb,
+#                     sheet = "eligible patients",
+#                     elig_patients.update.subset, 
+#                      keepNA=FALSE,
+#                     rowNames=FALSE)
+# openxlsx::saveWorkbook(wb,
+#                        "AAML0531_AAML1031_patients_for_manuscript_refined_060821_v2.xlsx",
+#              overwrite = T)
+```
+
+# Check
+
+```{r}
+check <- CDEs %>% 
+  filter(USI %in% elig_patients.update.subset$USI)
+
+dim(check) # 2060  150
+```
+
+```{r}
+table(check$WT1.mutation.)
+table(check$FLT3.ITD.positive.)
+table(check$NPM.mutation.)
+table(check$CEBPA.mutation.)
+```
+
+```{r}
+table(elig_patients.update.subset$WT1.mutation.)
+table(elig_patients.update.subset$FLT3.ITD.positive.)
+table(elig_patients.update.subset$NPM.mutation.)
+table(elig_patients.update.subset$CEBPA.mutation.)
+```
+
+
+
+#Session Information
+
+```{r}
+sessionInfo()
+```
+
